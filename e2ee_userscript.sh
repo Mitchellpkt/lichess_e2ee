@@ -1,9 +1,8 @@
 // ==UserScript==
 // @name         Lichess E2EE Chat
 // @namespace    http://tampermonkey.net/
-// @version      0.3
-// @description  Add end-to-end encryption to Lichess chat
-// @author       Mitchell PKT
+// @version      0.5
+// @description  Subtle grouping for E2EE controls
 // @match        https://lichess.org/*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
@@ -99,18 +98,23 @@
         loadSavedConfig();
         loadSavedPassphrase();
 
-        // Container
+        // Container with subtle divider on the left
         const container = document.createElement('div');
         container.id = 'e2ee-control';
         container.style.display = 'flex';
         container.style.alignItems = 'center';
         container.style.gap = '0.5rem';
 
+        // Subtle dividing line and a little left padding
+        container.style.borderLeft = '1px solid #666';
+        container.style.marginLeft = '8px';
+        container.style.paddingLeft = '8px';
+
         // Toggle container
         const toggleContainer = document.createElement('div');
         toggleContainer.style.display = 'flex';
         toggleContainer.style.alignItems = 'center';
-        toggleContainer.style.gap = '0.5rem';
+        toggleContainer.style.gap = '0.4rem';
 
         // Switch (slider) wrapper
         const toggleSwitch = document.createElement('label');
@@ -154,14 +158,13 @@
         // Label
         const toggleLabel = document.createElement('span');
         toggleLabel.textContent = 'E2EE';
-        toggleLabel.style.marginLeft = '0.5rem';
         toggleLabel.style.fontWeight = 'bold';
         toggleLabel.style.color = '#bababa';
 
         // Update slider style based on isEncryptionEnabled
         function updateSliderStyles() {
             if (toggleInput.checked) {
-                toggleSlider.style.backgroundColor = '#629924';
+                toggleSlider.style.backgroundColor = '#629924'; // green
                 toggleHandle.style.transform = 'translateX(26px)';
             } else {
                 toggleSlider.style.backgroundColor = '#ccc';
@@ -177,9 +180,10 @@
             saveConfiguration();
             updateSliderStyles();
 
-            // (3) If turned on but no passphrase set, prompt for one
+            // If turned on but no passphrase set, prompt for one
             if (isEncryptionEnabled && !passphrase) {
                 passphraseInput.style.display = 'block';
+                submitArrow.style.display = 'inline-block';
                 passphraseInput.value = '';
                 passphraseInput.focus();
             }
@@ -198,7 +202,7 @@
         const passphraseInput = document.createElement('input');
         passphraseInput.type = 'password';
         passphraseInput.placeholder = 'Enter passphrase';
-        passphraseInput.style.padding = '0.5rem';
+        passphraseInput.style.padding = '0.3rem 0.5rem';
         passphraseInput.style.backgroundColor = '#302e2c';
         passphraseInput.style.border = '1px solid #484541';
         passphraseInput.style.borderRadius = '3px';
@@ -210,7 +214,7 @@
         const submitArrow = document.createElement('button');
         submitArrow.textContent = '➜';
         submitArrow.style.marginLeft = '4px';
-        submitArrow.style.padding = '0.5rem';
+        submitArrow.style.padding = '0.3rem 0.5rem';
         submitArrow.style.borderRadius = '3px';
         submitArrow.style.cursor = 'pointer';
         submitArrow.style.backgroundColor = '#302e2c';
@@ -222,7 +226,6 @@
         const setPassphraseButton = document.createElement('a');
         setPassphraseButton.textContent = 'Set Passphrase';
         setPassphraseButton.className = 'link';
-        setPassphraseButton.style.marginLeft = '0.5rem';
         setPassphraseButton.style.fontWeight = 'bold';
         setPassphraseButton.style.color = '#bababa';
         setPassphraseButton.style.cursor = 'pointer';
@@ -264,9 +267,17 @@
         container.appendChild(passphraseInput);
         container.appendChild(submitArrow);
 
-        const lastChild = siteButtons.lastElementChild;
-        if (lastChild) siteButtons.insertBefore(container, lastChild);
-        else siteButtons.appendChild(container);
+        // Put the new container near search or challenge buttons if possible
+        const searchComponent = siteButtons.querySelector('.search-component');
+        const challengeButton = siteButtons.querySelector('a[href^="/challenge"]');
+
+        if (searchComponent) {
+            siteButtons.insertBefore(container, searchComponent);
+        } else if (challengeButton) {
+            siteButtons.insertBefore(container, challengeButton);
+        } else {
+            siteButtons.appendChild(container);
+        }
     }
 
     // --- Encryption & decryption ---
@@ -316,6 +327,7 @@
             return ws;
         };
 
+        // Also intercept the standard chat input
         const chatObserver = new MutationObserver(() => {
             const chatInput = document.querySelector('.mchat__say');
             if (chatInput && !chatInput.dataset.e2eeMonitored) {
@@ -378,4 +390,3 @@
         init();
     }
 })();
-
