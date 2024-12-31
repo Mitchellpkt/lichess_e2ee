@@ -20,8 +20,8 @@
     const PASSPHRASE_STORAGE_KEY = 'lichessE2EEPassphrase';
 
     // Markers for verifying decryption correctness
-    const MARKER_START = '<X2>';
-    const MARKER_END = '<Y2>';
+    const MARKER_START = '<X>';
+    const MARKER_END = '<Y>';
 
     let isEncryptionEnabled = false;
     let passphrase = '';
