@@ -1,0 +1,357 @@
+// ==UserScript==
+// @name         Lichess E2EE Chat
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Add end-to-end encryption to Lichess chat
+// @author       You
+// @match        https://lichess.org/*
+// @grant        none
+// @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Debug mode
+    const DEBUG = true;
+    const debug = (...args) => DEBUG && console.log('[E2EE Debug]', ...args);
+
+    // Persistent Storage Key
+    const STORAGE_KEY = 'lichessE2EEConfig';
+
+    // State
+    let isEncryptionEnabled = false;
+    let passphrase = '';
+
+    // Encrypt passphrase before storing
+    function encryptStoredData(data, secret) {
+        return CryptoJS.AES.encrypt(JSON.stringify(data), secret).toString();
+    }
+
+    // Decrypt stored passphrase
+    function decryptStoredData(encryptedData, secret) {
+        try {
+            const bytes = CryptoJS.AES.decrypt(encryptedData, secret);
+            return JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+        } catch (error) {
+            console.error('Decryption failed:', error);
+            return null;
+        }
+    }
+
+    // Load saved configuration
+    function loadSavedConfig() {
+        try {
+            const savedConfig = localStorage.getItem(STORAGE_KEY);
+            if (savedConfig) {
+                // Use browser's localStorage master key as secondary encryption
+                const browserKey = window.origin;
+                const decryptedConfig = decryptStoredData(savedConfig, browserKey);
+
+                if (decryptedConfig) {
+                    isEncryptionEnabled = decryptedConfig.isEnabled || false;
+                    passphrase = decryptedConfig.passphrase || '';
+                    debug('Loaded saved configuration');
+                    return decryptedConfig;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading saved configuration:', error);
+        }
+        return null;
+    }
+
+    // Save configuration
+    function saveConfiguration(overrides = {}) {
+        try {
+            const config = {
+                isEnabled: isEncryptionEnabled,
+                passphrase: passphrase,
+                ...overrides
+            };
+
+            // Use browser's origin as a secondary encryption key
+            const browserKey = window.origin;
+            const encryptedConfig = encryptStoredData(config, browserKey);
+
+            localStorage.setItem(STORAGE_KEY, encryptedConfig);
+            debug('Saved configuration');
+        } catch (error) {
+            console.error('Error saving configuration:', error);
+        }
+    }
+
+    // Create UI elements
+    function createE2EEControls() {
+        // Wait for site-buttons to exist
+        const siteButtons = document.querySelector('.site-buttons');
+        if (!siteButtons) {
+            debug('Site buttons not found, retrying in 500ms');
+            setTimeout(createE2EEControls, 500);
+            return;
+        }
+
+        // Don't create if already exists
+        if (document.querySelector('#e2ee-control')) {
+            return;
+        }
+
+        // Load saved configuration
+        const savedConfig = loadSavedConfig();
+
+        // Create container
+        const container = document.createElement('div');
+        container.id = 'e2ee-control';
+        container.style.display = 'flex';
+        container.style.alignItems = 'center';
+        container.style.gap = '0.5rem';
+
+        // Create encryption toggle switch
+        const toggleContainer = document.createElement('div');
+        toggleContainer.style.display = 'flex';
+        toggleContainer.style.alignItems = 'center';
+        toggleContainer.style.gap = '0.5rem';
+
+        const toggleSwitch = document.createElement('label');
+        toggleSwitch.className = 'switch';
+        toggleSwitch.style.position = 'relative';
+        toggleSwitch.style.display = 'inline-block';
+        toggleSwitch.style.width = '50px';
+        toggleSwitch.style.height = '24px';
+
+        const toggleInput = document.createElement('input');
+        toggleInput.type = 'checkbox';
+        toggleInput.style.opacity = '0';
+        toggleInput.style.width = '0';
+        toggleInput.style.height = '0';
+
+        const toggleSlider = document.createElement('span');
+        toggleSlider.style.position = 'absolute';
+        toggleSlider.style.cursor = 'pointer';
+        toggleSlider.style.top = '0';
+        toggleSlider.style.left = '0';
+        toggleSlider.style.right = '0';
+        toggleSlider.style.bottom = '0';
+        toggleSlider.style.backgroundColor = '#ccc';
+        toggleSlider.style.transition = '0.4s';
+        toggleSlider.style.borderRadius = '24px';
+        toggleSlider.style.padding = '2px';
+        toggleSlider.style.boxSizing = 'border-box';
+        toggleSlider.style.display = 'flex';
+        toggleSlider.style.alignItems = 'center';
+
+        const toggleHandle = document.createElement('span');
+        toggleHandle.style.height = '20px';
+        toggleHandle.style.width = '20px';
+        toggleHandle.style.borderRadius = '50%';
+        toggleHandle.style.backgroundColor = 'white';
+        toggleHandle.style.transform = 'translateX(0)';
+        toggleHandle.style.transition = '0.4s';
+
+        const toggleLabel = document.createElement('span');
+        toggleLabel.textContent = 'E2EE';
+        toggleLabel.style.marginLeft = '0.5rem';
+        toggleLabel.style.fontWeight = 'bold';
+        toggleLabel.style.color = '#bababa';
+
+        // Create passphrase input
+        const passphraseInput = document.createElement('input');
+        passphraseInput.type = 'password';
+        passphraseInput.placeholder = 'Enter passphrase';
+        passphraseInput.style.padding = '0.5rem';
+        passphraseInput.style.backgroundColor = '#302e2c';
+        passphraseInput.style.border = '1px solid #484541';
+        passphraseInput.style.borderRadius = '3px';
+        passphraseInput.style.color = '#bababa';
+        passphraseInput.style.width = '150px';
+        passphraseInput.style.display = 'none';
+
+        // Create set passphrase button
+        const setPassphraseButton = document.createElement('a');
+        setPassphraseButton.className = 'link';
+        setPassphraseButton.style.marginLeft = '0.5rem';
+        setPassphraseButton.style.fontWeight = 'bold';
+        setPassphraseButton.style.color = '#bababa';
+        setPassphraseButton.style.cursor = 'pointer';
+        setPassphraseButton.style.textDecoration = 'none';
+        setPassphraseButton.textContent = 'Set Passphrase';
+        setPassphraseButton.addEventListener('mouseenter', () => {
+            setPassphraseButton.style.opacity = '0.8';
+        });
+        setPassphraseButton.addEventListener('mouseleave', () => {
+            setPassphraseButton.style.opacity = '1';
+        });
+
+        // Initialize state from saved configuration
+        if (savedConfig) {
+            isEncryptionEnabled = savedConfig.isEnabled;
+            passphrase = savedConfig.passphrase || '';
+            toggleInput.checked = isEncryptionEnabled;
+        }
+
+        function updateToggleStyle() {
+            if (toggleInput.checked) {
+                toggleSlider.style.backgroundColor = '#629924';
+                toggleHandle.style.transform = 'translateX(26px)';
+            } else {
+                toggleSlider.style.backgroundColor = '#ccc';
+                toggleHandle.style.transform = 'translateX(0)';
+            }
+        }
+
+        // Toggle encryption on/off
+        toggleInput.addEventListener('change', () => {
+            isEncryptionEnabled = toggleInput.checked;
+            updateToggleStyle();
+
+            // Save configuration
+            saveConfiguration({
+                isEnabled: isEncryptionEnabled
+            });
+
+            debug('Encryption toggled:', isEncryptionEnabled);
+        });
+
+        // Initial toggle style
+        updateToggleStyle();
+
+        // Set passphrase button click handler
+        setPassphraseButton.addEventListener('click', () => {
+            passphraseInput.style.display = passphraseInput.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Passphrase input handler
+        passphraseInput.addEventListener('change', (e) => {
+            passphrase = e.target.value;
+
+            // Save configuration
+            saveConfiguration({
+                passphrase: passphrase
+            });
+
+            // Hide input after setting
+            passphraseInput.style.display = 'none';
+
+            debug('Passphrase updated');
+        });
+
+        // Hide passphrase input on click outside
+        document.addEventListener('click', (e) => {
+            if (!container.contains(e.target)) {
+                passphraseInput.style.display = 'none';
+            }
+        });
+
+        // Assemble toggle switch
+        toggleSlider.appendChild(toggleHandle);
+        toggleSwitch.appendChild(toggleInput);
+        toggleSwitch.appendChild(toggleSlider);
+
+        // Assemble toggle container
+        toggleContainer.appendChild(toggleSwitch);
+        toggleContainer.appendChild(toggleLabel);
+
+        // Append elements to container
+        container.appendChild(toggleContainer);
+        container.appendChild(setPassphraseButton);
+        container.appendChild(passphraseInput);
+
+        // Find and insert before the last child
+        const lastChild = siteButtons.lastElementChild;
+        if (lastChild) {
+            siteButtons.insertBefore(container, lastChild);
+        } else {
+            siteButtons.appendChild(container);
+        }
+
+        debug('E2EE controls created');
+    }
+
+    // Encryption function
+    function encryptMessage(message) {
+        if (!isEncryptionEnabled || !passphrase) {
+            debug('Encryption skipped - disabled or no passphrase');
+            return message;
+        }
+        try {
+            const encrypted = CryptoJS.AES.encrypt(message, passphrase).toString();
+            const result = `!e2ee!${encrypted}`;
+            debug('Message encrypted:', { original: message, encrypted: result });
+            return result;
+        } catch (error) {
+            console.error('Encryption failed:', error);
+            return message;
+        }
+    }
+
+    // Monitor WebSocket connections and chat input
+    function monitorCommunication() {
+        debug('Setting up communication monitors');
+
+        // Monitor WebSocket
+        const originalWebSocket = window.WebSocket;
+        window.WebSocket = function(url, protocols) {
+            debug('New WebSocket connection to:', url);
+            const ws = new originalWebSocket(url, protocols);
+
+            const originalSend = ws.send;
+            ws.send = function(data) {
+                debug('WebSocket raw send:', data);
+                if (typeof data === 'string' && data.includes('"t":"talk"')) {
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (parsed.t === 'talk') {
+                            debug('Intercepted outgoing message:', parsed);
+                            parsed.d = encryptMessage(parsed.d);
+                            data = JSON.stringify(parsed);
+                            debug('Modified to:', data);
+                        }
+                    } catch (e) {
+                        debug('Send parse error:', e);
+                    }
+                }
+                return originalSend.call(ws, data);
+            };
+
+            return ws;
+        };
+
+        // Monitor chat input
+        const chatObserver = new MutationObserver(() => {
+            const chatInput = document.querySelector('.mchat__say');
+            if (chatInput && !chatInput.dataset.e2eeMonitored) {
+                chatInput.dataset.e2eeMonitored = 'true';
+                chatInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        const message = this.value;
+                        debug('Chat input intercepted:', message);
+                        if (isEncryptionEnabled && passphrase) {
+                            this.value = encryptMessage(message);
+                            debug('Chat input modified to:', this.value);
+                        }
+                    }
+                }, true);
+            }
+        });
+
+        chatObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    // Initialize
+    function init() {
+        debug('Initializing E2EE chat');
+        createE2EEControls();
+        monitorCommunication();
+        debug('Initialization complete');
+    }
+
+    // Start initialization
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
