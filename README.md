@@ -4,6 +4,8 @@ A Tampermonkey (or similar) userscript that adds passphrase-based end-to-end enc
 
 Why? Lichess has server-side logic that strips emojis from chats, which is a bummer. With this extension, you can send emojis again. 😁
 
+![image](https://github.com/user-attachments/assets/f0c88c88-9395-4dd8-ae28-3ddaa9fc2059)
+
 ---
 
 ## How It Works
