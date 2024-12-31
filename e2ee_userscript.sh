@@ -23,6 +23,9 @@
     const MARKER_START = '<X>';
     const MARKER_END = '<Y>';
 
+    // Dynamic E2EE tag
+    const E2EE_TAG = '!e2ee!';
+
     let isEncryptionEnabled = false;
     let passphrase = '';
 
@@ -30,6 +33,7 @@
     function encryptStoredData(data, secret) {
         return CryptoJS.AES.encrypt(JSON.stringify(data), secret).toString();
     }
+
     function decryptStoredData(encryptedData, secret) {
         try {
             const bytes = CryptoJS.AES.decrypt(encryptedData, secret);
@@ -51,6 +55,7 @@
             }
         } catch {}
     }
+
     function loadSavedPassphrase() {
         try {
             const data = localStorage.getItem(PASSPHRASE_STORAGE_KEY);
@@ -62,11 +67,13 @@
             }
         } catch {}
     }
+
     function saveConfiguration(overrides = {}) {
         const config = { isEnabled: isEncryptionEnabled, ...overrides };
         const encrypted = encryptStoredData(config, window.origin);
         localStorage.setItem(CONFIG_STORAGE_KEY, encrypted);
     }
+
     function savePassphrase(newPass) {
         const encrypted = encryptStoredData(newPass, window.origin);
         localStorage.setItem(PASSPHRASE_STORAGE_KEY, encrypted);
@@ -286,15 +293,17 @@
         try {
             const wrapped = MARKER_START + message + MARKER_END;
             const cipher = CryptoJS.AES.encrypt(wrapped, passphrase).toString();
-            return `!e2ee!${cipher}`;
+            return E2EE_TAG + cipher; // Use the dynamic tag here
         } catch {
             return message;
         }
     }
+
     function decryptMessage(encryptedMessage) {
         if (!passphrase) return null;
         try {
-            const ciphertext = encryptedMessage.replace('!e2ee!', '');
+            // Strip out only the cipher from after our dynamic tag
+            const ciphertext = encryptedMessage.replace(E2EE_TAG, '');
             const bytes = CryptoJS.AES.decrypt(ciphertext, passphrase);
             const plaintext = bytes.toString(CryptoJS.enc.Utf8);
             if (!plaintext.startsWith(MARKER_START) || !plaintext.endsWith(MARKER_END)) {
@@ -353,9 +362,10 @@
         }
         return results;
     }
+
     function periodicDecryptionScanner() {
         setInterval(() => {
-            const textNodes = findTextNodesContaining('!e2ee!', document.body);
+            const textNodes = findTextNodesContaining(E2EE_TAG, document.body); // Use the dynamic tag
             textNodes.forEach(node => {
                 const parentEl = node.parentElement;
                 if (!parentEl) return;
