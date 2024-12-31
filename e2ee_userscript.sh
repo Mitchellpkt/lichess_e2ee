@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Lichess E2EE Chat
+// @name         E2EE messages over Lichess chat
 // @namespace    http://tampermonkey.net/
 // @version      0.5
-// @description  Subtle grouping for E2EE controls
+// @description  Encrypts messages before sending, and decrypts chat box
 // @match        https://lichess.org/*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
