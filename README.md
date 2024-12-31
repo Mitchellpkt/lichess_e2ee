@@ -1,62 +1,79 @@
-# Lichess E2EE
+# Lichess end-to-end encryption (LE2EE)
 
-Adds passphrase-based symmetric end-to-end encryption over Lichess chat (using AES-256 in CBC mode via CryptoJS)
+A Tampermonkey (or similar) userscript that adds passphrase-based end-to-end encryption to Lichess chat, using **AES-256** (CBC mode via CryptoJS). Messages are encrypted locally in your browser before being sent, and only those who share your passphrase (and also have this script) can decrypt them.
 
-## Validation
-Text color:
+Why? Lichess has server-side logic that strips emojis from chats, which is a bummer. With this extension, you can send emojis again. 😁
 
-* **White** if the message was sent plaintext
-* **Green** if the message is successfully decrypted.
-* **Red** if the message is marked as encrypted but fails to decrypt (e.g., due wrong passphrase or server converting ciphertext to lower case).
+---
+
+## How It Works
+
+1. **Outgoing Encryption**  
+   When you enable E2EE and have set a passphrase, the script intercepts outgoing chat messages at the WebSocket level. Messages are encrypted, then sent with a `!e2ee!` prefix.
+
+2. **Incoming Decryption**  
+   The script periodically scans all chat messages for the `!e2ee!` prefix. If found, it attempts to decrypt those messages. Successful decryption appears in **green**, while failed decryption appears in **red**.
+
+---
 
 ## Quick Start
 
-1. **Install**:
-   * Copy the userscript (`e2ee_userscript_v2.txt`) into a Tampermonkey (or similar) userscript environment.
-2. **Open Lichess**:
-   * Navigate to a Lichess game page.
-3. **Set Passphrase**:
-   * Use the "Set Passphrase" button in the top bar.
-   * Any outgoing messages will now be encrypted if the toggle is on.
-4. **Toggle Encryption**:
-   * Turn the E2EE switch ON/OFF at any time.
-5. **Chat**:
-   * When ON, your messages will appear as `!e2ee!<ciphertext>` to anyone who does not have the same passphrase.
-   * When OFF, chat messages remain in plain text.
+1. **Install**  
+   - Copy this userscript (e.g., `e2ee_userscript_v2.txt`) into Tampermonkey or a similar userscript manager.  
+   - Save and enable the script.
+
+2. **Visit Lichess**  
+   - Go to [lichess.org](https://lichess.org/) and open any page with a chat (e.g., a game or a lobby).
+
+3. **Set Passphrase**  
+   - Click **"Set Passphrase"** in the top bar (added by the script).
+   - Enter your shared secret. This passphrase must match on all devices/users who want to read your messages in plaintext.
+
+4. **Toggle Encryption**  
+   - Use the **E2EE** switch (also in the top bar) to turn encryption **ON** or **OFF** at any time.
+   - When OFF, your messages are sent in plaintext as normal.
+
+5. **Chat**  
+   - With E2EE **ON**, your outgoing messages appear as `!e2ee!<ciphertext>` to anyone without the same passphrase/script.  
+   - If they have the same passphrase, the text auto-decrypts and shows in green.
+
+---
+
+## Color Coding & Validation
+
+- **Green**: The message was encrypted and successfully decrypted with your passphrase.  
+- **Red**: The message appears encrypted (`!e2ee!`) but failed to decrypt (likely a wrong passphrase or garbled ciphertext).  
+- **Default (White)**: The message was sent as plaintext.
+
+---
 
 ## Detailed Mechanics & Safeguards
 
-1. **Encryption**
-   * The script intercepts outgoing Lichess chat messages at the WebSocket level.
-   * If E2EE is **enabled** and a passphrase is set, it **AES-encrypts** the plaintext, adds a `!e2ee!` prefix, and sends that ciphertext.
+1. **Markers**  
+   - Before encryption, each outgoing message is prepended with `<X>` and appended with `<Y>`.  
+   - Upon decryption, the script verifies these markers to ensure the message was decrypted properly.
 
-2. **Markers**
-   * Each outgoing message is prepended with `<X>` and appended with `<Y>` before encryption.
-   * Ensures that, on decrypt, we can verify these markers exist. If they do not, we assume the passphrase is incorrect and mark the text red.
+2. **DOM Scanning**  
+   - Every 2 seconds, the script scans for `!e2ee!` strings in the chat area and attempts to decrypt them.  
+   - If you correct an initially wrong passphrase, previous messages can become green if they are re-decrypted successfully.
 
-3. **Decryption**
-   * Every 2 seconds, the script scans all text nodes in the DOM for `!e2ee!`.
-   * Attempts to decrypt them.
-   * **Green** if decryption + marker check succeeds, **red** if it fails.
-   * If you initially had the wrong passphrase, then correct it, the script will retry and eventually show old messages in green if they can now be decrypted.
+3. **Local Storage**  
+   - Your passphrase and script settings are saved in `localStorage`, AES-encrypted again using your current browser `origin` as an additional key.  
+   - Clearing browser data removes your passphrase.
 
-4. **UI Elements**
-   * **Toggle**: A switch that turns encryption on/off.
-   * **Passphrase**: A field to set the secret. Passphrase is stored (AES-encrypted) in `localStorage`.
+4. **Security Considerations**  
+   - **Shared Secret**: You must share your passphrase *outside* Lichess chat to ensure security.  
+   - **Local Script**: The encryption happens entirely in your browser, but if your device is compromised, messages could still be exposed.  
+   - **Lichess Server**: The server only sees ciphertext, not plaintext, but it still logs the encrypted messages.
 
-5. **Storage**
-   * The script uses your browser's `origin` (e.g., `https://lichess.org`) as a secondary key to encrypt configuration data and passphrase in `localStorage`.
-   * If you clear your browser data, you lose the passphrase.
+5. **Limitations**  
+   - All participants must be running this userscript and using the *same passphrase* to see each other’s messages in plaintext.  
+   - If Lichess changes how chat messages are rendered, minor updates to the script may be required.
 
-6. **Color Coding**
-   * **Green**: Decrypted messages.
-   * **Red**: Recognized encrypted messages that failed to decrypt.
+---
 
-7. **Security Considerations**
-   * **Shared Passphrase**: Must be communicated securely outside of Lichess (e.g., via a secure channel).
-   * **Local Script**: This is a client-side script. If you run it on a compromised browser or device, it can't protect your messages.
-   * **Source**: The script is open for inspection, but keep in mind that Lichess's chat is otherwise not natively end-to-end encrypted.
+## Contributing
 
-8. **Limitations**
-   * Only those using the same script and passphrase will see your messages in plaintext.
-   * The script relies on DOM scanning for incoming messages. If Lichess changes how chat is rendered, minor fixes to the script might be required.
+- The script is open source. Feel free to submit issues and pull requests.  
+- Use at your own risk; this is offered without warranty.
+
