@@ -1,6 +1,6 @@
 # Lichess end-to-end encryption (LE2EE)
 
-A Tampermonkey (or similar) userscript that adds passphrase-based end-to-end encryption to Lichess chat, using **AES-256** (CBC mode via CryptoJS). Messages are encrypted locally in your browser before being sent, and only those who share your passphrase (and also have this script) can decrypt them.
+A Tampermonkey (or similar) userscript that adds passphrase-based end-to-end encryption over Lichess chat, using **AES-256** (CBC mode via CryptoJS). Messages are encrypted locally in your browser before being sent, and only those who share your passphrase (and also have this script) can decrypt them.
 
 Why? Lichess has server-side logic that strips emojis from chats, which is a bummer. With this extension, you can send emojis again. 😁
 
