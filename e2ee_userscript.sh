@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E2EE messages over Lichess chat
 // @namespace    http://tampermonkey.net/
-// @version      0.5
+// @version      0.6
 // @description  Encrypts messages before sending, and decrypts chat box
 // @match        https://lichess.org/*
 // @grant        none
@@ -287,13 +287,23 @@
         }
     }
 
-    // --- Encryption & decryption ---
+    // --- Encryption & decryption (HEX) ---
     function encryptMessage(message) {
         if (!isEncryptionEnabled || !passphrase) return message;
         try {
+            // Wrap the plaintext with markers
             const wrapped = MARKER_START + message + MARKER_END;
-            const cipher = CryptoJS.AES.encrypt(wrapped, passphrase).toString();
-            return E2EE_TAG + cipher; // Use the dynamic tag here
+
+            // Perform AES encryption
+            const encrypted = CryptoJS.AES.encrypt(wrapped, passphrase);
+
+            // Convert each piece to hex
+            const ciphertextHex = encrypted.ciphertext.toString(CryptoJS.enc.Hex);
+            const saltHex       = encrypted.salt.toString(CryptoJS.enc.Hex);
+            const ivHex         = encrypted.iv.toString(CryptoJS.enc.Hex);
+
+            // Join them, then prepend our E2EE tag
+            return E2EE_TAG + `${saltHex}:${ivHex}:${ciphertextHex}`;
         } catch {
             return message;
         }
@@ -302,13 +312,29 @@
     function decryptMessage(encryptedMessage) {
         if (!passphrase) return null;
         try {
-            // Strip out only the cipher from after our dynamic tag
-            const ciphertext = encryptedMessage.replace(E2EE_TAG, '');
-            const bytes = CryptoJS.AES.decrypt(ciphertext, passphrase);
+            // Remove the E2EE tag
+            const ciphertextPart = encryptedMessage.replace(E2EE_TAG, '');
+
+            // Should be saltHex:ivHex:ciphertextHex
+            const [saltHex, ivHex, ciphertextHex] = ciphertextPart.split(':');
+            if (!saltHex || !ivHex || !ciphertextHex) return null;
+
+            // Rebuild CipherParams for CryptoJS
+            const cipherParams = CryptoJS.lib.CipherParams.create({
+                ciphertext: CryptoJS.enc.Hex.parse(ciphertextHex),
+                salt:       CryptoJS.enc.Hex.parse(saltHex),
+                iv:         CryptoJS.enc.Hex.parse(ivHex),
+            });
+
+            // Decrypt
+            const bytes = CryptoJS.AES.decrypt(cipherParams, passphrase);
             const plaintext = bytes.toString(CryptoJS.enc.Utf8);
+
+            // Verify markers
             if (!plaintext.startsWith(MARKER_START) || !plaintext.endsWith(MARKER_END)) {
                 return null;
             }
+            // Return the original plaintext without markers
             return plaintext.slice(MARKER_START.length, plaintext.length - MARKER_END.length);
         } catch {
             return null;
@@ -365,7 +391,7 @@
 
     function periodicDecryptionScanner() {
         setInterval(() => {
-            const textNodes = findTextNodesContaining(E2EE_TAG, document.body); // Use the dynamic tag
+            const textNodes = findTextNodesContaining(E2EE_TAG, document.body);
             textNodes.forEach(node => {
                 const parentEl = node.parentElement;
                 if (!parentEl) return;
