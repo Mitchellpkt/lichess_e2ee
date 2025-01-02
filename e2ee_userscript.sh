@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         E2EE messages over Lichess chat
 // @namespace    http://tampermonkey.net/
-// @version      0.6
+// @version      0.7
 // @description  Encrypts messages before sending, and decrypts chat box
 // @match        https://lichess.org/*
 // @grant        none
@@ -16,20 +16,32 @@
     const debug = (...args) => DEBUG && console.log('[E2EE]', ...args);
 
     // Persistent keys
-    const CONFIG_STORAGE_KEY = 'lichessE2EEConfig';
-    const PASSPHRASE_STORAGE_KEY = 'lichessE2EEPassphrase';
+    const CONFIG_STORAGE_KEY       = 'lichessE2EEConfig';
+    const PASSPHRASE_STORAGE_KEY   = 'lichessE2EEPassphrase';
 
     // Markers for verifying decryption correctness
     const MARKER_START = '<X>';
-    const MARKER_END = '<Y>';
+    const MARKER_END   = '<Y>';
 
     // Dynamic E2EE tag
     const E2EE_TAG = '!e2ee!';
 
+    // Available encodings
+    const ENCODING_OPTIONS = {
+        b: 'Base64',
+        h: 'Hex',
+        z: 'Z-Base32'
+    };
+
+    // Defaults
     let isEncryptionEnabled = false;
     let passphrase = '';
+    let encodingChoice = 'z'; // default to zBase32
 
-    // --- LocalStorage encryption/decryption helpers ---
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── LOAD/SAVE CONFIG AND PASSPHRASE ────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+
     function encryptStoredData(data, secret) {
         return CryptoJS.AES.encrypt(JSON.stringify(data), secret).toString();
     }
@@ -43,7 +55,6 @@
         }
     }
 
-    // --- Load/save config and passphrase ---
     function loadSavedConfig() {
         try {
             const data = localStorage.getItem(CONFIG_STORAGE_KEY);
@@ -51,6 +62,10 @@
                 const decrypted = decryptStoredData(data, window.origin);
                 if (decrypted) {
                     isEncryptionEnabled = decrypted.isEnabled || false;
+                    // If 'encoding' is present, load that; else keep default 'z'
+                    if (decrypted.encoding && ENCODING_OPTIONS[decrypted.encoding]) {
+                        encodingChoice = decrypted.encoding;
+                    }
                 }
             }
         } catch {}
@@ -69,7 +84,11 @@
     }
 
     function saveConfiguration(overrides = {}) {
-        const config = { isEnabled: isEncryptionEnabled, ...overrides };
+        const config = {
+            isEnabled: isEncryptionEnabled,
+            encoding: encodingChoice,
+            ...overrides
+        };
         const encrypted = encryptStoredData(config, window.origin);
         localStorage.setItem(CONFIG_STORAGE_KEY, encrypted);
     }
@@ -79,7 +98,10 @@
         localStorage.setItem(PASSPHRASE_STORAGE_KEY, encrypted);
     }
 
-    // --- Handle passphrase submission ---
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── UI CREATION FOR TOGGLE, PASSPHRASE, AND ENCODING ───────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+
     function handlePassphraseSubmission(inputEl) {
         const newPass = inputEl.value.trim();
         if (!newPass) {
@@ -93,7 +115,6 @@
         inputEl.style.display = 'none';
     }
 
-    // --- UI creation for toggle and passphrase ---
     function createE2EEControls() {
         const siteButtons = document.querySelector('.site-buttons');
         if (!siteButtons) {
@@ -111,26 +132,24 @@
         container.style.display = 'flex';
         container.style.alignItems = 'center';
         container.style.gap = '0.5rem';
-
-        // Subtle dividing line and a little left padding
         container.style.borderLeft = '1px solid #666';
         container.style.marginLeft = '8px';
         container.style.paddingLeft = '8px';
 
-        // Toggle container
+        // ─────────────────────────────────────────────────────────────────────────
+        // Toggle (on/off)
+        // ─────────────────────────────────────────────────────────────────────────
         const toggleContainer = document.createElement('div');
         toggleContainer.style.display = 'flex';
         toggleContainer.style.alignItems = 'center';
         toggleContainer.style.gap = '0.4rem';
 
-        // Switch (slider) wrapper
         const toggleSwitch = document.createElement('label');
         toggleSwitch.style.position = 'relative';
         toggleSwitch.style.display = 'inline-block';
         toggleSwitch.style.width = '50px';
         toggleSwitch.style.height = '24px';
 
-        // The actual checkbox input
         const toggleInput = document.createElement('input');
         toggleInput.type = 'checkbox';
         toggleInput.style.opacity = '0';
@@ -138,7 +157,6 @@
         toggleInput.style.height = '0';
         toggleInput.checked = isEncryptionEnabled;
 
-        // Slider background
         const toggleSlider = document.createElement('span');
         toggleSlider.style.position = 'absolute';
         toggleSlider.style.cursor = 'pointer';
@@ -154,7 +172,6 @@
         toggleSlider.style.display = 'flex';
         toggleSlider.style.alignItems = 'center';
 
-        // Slider "handle"
         const toggleHandle = document.createElement('span');
         toggleHandle.style.height = '20px';
         toggleHandle.style.width = '20px';
@@ -162,13 +179,11 @@
         toggleHandle.style.backgroundColor = 'white';
         toggleHandle.style.transition = '0.4s';
 
-        // Label
         const toggleLabel = document.createElement('span');
         toggleLabel.textContent = 'E2EE';
         toggleLabel.style.fontWeight = 'bold';
         toggleLabel.style.color = '#bababa';
 
-        // Update slider style based on isEncryptionEnabled
         function updateSliderStyles() {
             if (toggleInput.checked) {
                 toggleSlider.style.backgroundColor = '#629924'; // green
@@ -178,15 +193,12 @@
                 toggleHandle.style.transform = 'translateX(0)';
             }
         }
+        updateSliderStyles();
 
-        updateSliderStyles(); // initial look
-
-        // When toggling E2EE
         toggleInput.addEventListener('change', () => {
             isEncryptionEnabled = toggleInput.checked;
             saveConfiguration();
             updateSliderStyles();
-
             // If turned on but no passphrase set, prompt for one
             if (isEncryptionEnabled && !passphrase) {
                 passphraseInput.style.display = 'block';
@@ -196,16 +208,16 @@
             }
         });
 
-        // Assemble the slider
         toggleSlider.appendChild(toggleHandle);
         toggleSwitch.appendChild(toggleInput);
         toggleSwitch.appendChild(toggleSlider);
 
-        // Put them together
         toggleContainer.appendChild(toggleSwitch);
         toggleContainer.appendChild(toggleLabel);
 
+        // ─────────────────────────────────────────────────────────────────────────
         // Passphrase input
+        // ─────────────────────────────────────────────────────────────────────────
         const passphraseInput = document.createElement('input');
         passphraseInput.type = 'password';
         passphraseInput.placeholder = 'Enter passphrase';
@@ -227,9 +239,9 @@
         submitArrow.style.backgroundColor = '#302e2c';
         submitArrow.style.border = '1px solid #484541';
         submitArrow.style.color = '#bababa';
-        submitArrow.style.display = 'none'; // will show up alongside passphrase
+        submitArrow.style.display = 'none';
 
-        // Toggle passphrase input with link
+        // Toggle passphrase input link
         const setPassphraseButton = document.createElement('a');
         setPassphraseButton.textContent = 'Set Passphrase';
         setPassphraseButton.className = 'link';
@@ -248,7 +260,6 @@
             }
         });
 
-        // Press Enter to submit passphrase
         passphraseInput.addEventListener('keydown', e => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -256,7 +267,6 @@
             }
         });
 
-        // Click arrow to submit passphrase
         submitArrow.addEventListener('click', () => {
             handlePassphraseSubmission(passphraseInput);
         });
@@ -269,15 +279,57 @@
             }
         });
 
+        // ─────────────────────────────────────────────────────────────────────────
+        // Encoding dropdown
+        // ─────────────────────────────────────────────────────────────────────────
+        const encodingLabel = document.createElement('span');
+        encodingLabel.textContent = 'Encoding:';
+        encodingLabel.style.color = '#bababa';
+        encodingLabel.style.fontWeight = 'bold';
+
+        const encodingSelect = document.createElement('select');
+        encodingSelect.style.backgroundColor = '#302e2c';
+        encodingSelect.style.border = '1px solid #484541';
+        encodingSelect.style.color = '#bababa';
+        encodingSelect.style.padding = '0.2rem';
+        encodingSelect.style.borderRadius = '3px';
+
+        // Populate the <select> with b/h/z
+        Object.entries(ENCODING_OPTIONS).forEach(([val, label]) => {
+            const opt = document.createElement('option');
+            opt.value = val;
+            opt.textContent = label;
+            if (val === encodingChoice) {
+                opt.selected = true;
+            }
+            encodingSelect.appendChild(opt);
+        });
+
+        encodingSelect.addEventListener('change', () => {
+            encodingChoice = encodingSelect.value; // b/h/z
+            saveConfiguration();
+        });
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Add everything into container
+        // ─────────────────────────────────────────────────────────────────────────
         container.appendChild(toggleContainer);
         container.appendChild(setPassphraseButton);
         container.appendChild(passphraseInput);
         container.appendChild(submitArrow);
 
-        // Put the new container near search or challenge buttons if possible
+        // A small gap or separator for the next label
+        const spacer = document.createElement('span');
+        spacer.textContent = ' | ';
+        spacer.style.color = '#666';
+        container.appendChild(spacer);
+
+        container.appendChild(encodingLabel);
+        container.appendChild(encodingSelect);
+
+        // Insert in siteButtons
         const searchComponent = siteButtons.querySelector('.search-component');
         const challengeButton = siteButtons.querySelector('a[href^="/challenge"]');
-
         if (searchComponent) {
             siteButtons.insertBefore(container, searchComponent);
         } else if (challengeButton) {
@@ -287,61 +339,173 @@
         }
     }
 
-    // --- Encryption & decryption (HEX) ---
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── ENCRYPT/DECRYPT DISPATCH BASED ON ENCODING ─────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // 1) AES encrypt the message, giving us .ciphertext, .salt, .iv
+    // 2) Encode each piece with the chosen method (b/h/z)
+    // 3) Prefix with "!e2ee!x|" where x ∈ {b,h,z}
     function encryptMessage(message) {
         if (!isEncryptionEnabled || !passphrase) return message;
         try {
-            // Wrap the plaintext with markers
             const wrapped = MARKER_START + message + MARKER_END;
-
-            // Perform AES encryption
             const encrypted = CryptoJS.AES.encrypt(wrapped, passphrase);
 
-            // Convert each piece to hex
-            const ciphertextHex = encrypted.ciphertext.toString(CryptoJS.enc.Hex);
-            const saltHex       = encrypted.salt.toString(CryptoJS.enc.Hex);
-            const ivHex         = encrypted.iv.toString(CryptoJS.enc.Hex);
+            // Convert each piece depending on chosen encoding
+            const ctEncoded = encodeData(encrypted.ciphertext, encodingChoice);
+            const sEncoded  = encodeData(encrypted.salt,       encodingChoice);
+            const ivEncoded = encodeData(encrypted.iv,         encodingChoice);
 
-            // Join them, then prepend our E2EE tag
-            return E2EE_TAG + `${saltHex}:${ivHex}:${ciphertextHex}`;
+            // Example: "!e2ee!z|salt:iv:cipher"
+            return E2EE_TAG + encodingChoice + '|' + sEncoded + ':' + ivEncoded + ':' + ctEncoded;
         } catch {
             return message;
         }
     }
 
-    function decryptMessage(encryptedMessage) {
+    function decryptMessage(fullText) {
         if (!passphrase) return null;
         try {
-            // Remove the E2EE tag
-            const ciphertextPart = encryptedMessage.replace(E2EE_TAG, '');
+            // Must start with "!e2ee!"
+            if (!fullText.startsWith(E2EE_TAG)) return null;
 
-            // Should be saltHex:ivHex:ciphertextHex
-            const [saltHex, ivHex, ciphertextHex] = ciphertextPart.split(':');
-            if (!saltHex || !ivHex || !ciphertextHex) return null;
+            // Next character after "!e2ee!" is encoding (b/h/z), then '|'
+            const encChar = fullText.charAt(E2EE_TAG.length);
+            if (!ENCODING_OPTIONS[encChar]) return null; // invalid
+            const remainder = fullText.slice(E2EE_TAG.length + 2); // skip "x|"
 
-            // Rebuild CipherParams for CryptoJS
+            // remainder => "saltEnc:ivEnc:cipherEnc"
+            const [sEnc, ivEnc, ctEnc] = remainder.split(':');
+            if (!sEnc || !ivEnc || !ctEnc) return null;
+
+            // Decode each
+            const salt       = decodeData(sEnc,  encChar);
+            const iv         = decodeData(ivEnc, encChar);
+            const ciphertext = decodeData(ctEnc, encChar);
+            if (!salt || !iv || !ciphertext) return null;
+
+            // Rebuild
             const cipherParams = CryptoJS.lib.CipherParams.create({
-                ciphertext: CryptoJS.enc.Hex.parse(ciphertextHex),
-                salt:       CryptoJS.enc.Hex.parse(saltHex),
-                iv:         CryptoJS.enc.Hex.parse(ivHex),
+                ciphertext,
+                salt,
+                iv
             });
 
             // Decrypt
             const bytes = CryptoJS.AES.decrypt(cipherParams, passphrase);
             const plaintext = bytes.toString(CryptoJS.enc.Utf8);
-
-            // Verify markers
             if (!plaintext.startsWith(MARKER_START) || !plaintext.endsWith(MARKER_END)) {
                 return null;
             }
-            // Return the original plaintext without markers
             return plaintext.slice(MARKER_START.length, plaintext.length - MARKER_END.length);
         } catch {
             return null;
         }
     }
 
-    // --- WebSocket & chat input interception (outgoing encryption) ---
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── INDIVIDUAL ENCODING ROUTINES ───────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // Encodes a CryptoJS WordArray using b/h/z
+    function encodeData(wordArray, method) {
+        switch (method) {
+            case 'b': // Base64
+                return wordArray.toString(CryptoJS.enc.Base64)
+                    .replace(/\+/g, '-').replace(/\//g, '_');
+                // (optional) replace +/ with -_ if you want URL-safe
+
+            case 'h': // Hex
+                return wordArray.toString(CryptoJS.enc.Hex);
+
+            case 'z': // Z-Base-32
+            default:
+                return zBase32Encode(wordArray);
+        }
+    }
+
+    // Decodes a string to a CryptoJS WordArray using b/h/z
+    function decodeData(str, method) {
+        switch (method) {
+            case 'b': // Base64
+                // Reverse any +/ replacements if you did them
+                str = str.replace(/-/g, '+').replace(/_/g, '/');
+                return CryptoJS.enc.Base64.parse(str);
+
+            case 'h': // Hex
+                return CryptoJS.enc.Hex.parse(str);
+
+            case 'z': // Z-Base-32
+            default:
+                return zBase32Decode(str);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── BASE32 (LOWERCASE-ONLY) HELPERS ────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+    const ZBASE32_ALPHABET = 'ybndrfg8ejkmcpqxot1uwisza345h769';
+
+    function zBase32Encode(wordArray) {
+        // First convert WordArray to regular bytes
+        const words = wordArray.words;
+        const sigBytes = wordArray.sigBytes;
+        const bytes = new Uint8Array(sigBytes);
+
+        for (let i = 0; i < sigBytes; i++) {
+            bytes[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+        }
+
+        // Convert to binary string
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += bytes[i].toString(2).padStart(8, '0');
+        }
+
+        // Encode 5 bits at a time
+        let result = '';
+        for (let i = 0; i < binary.length; i += 5) {
+            const chunk = binary.slice(i, i + 5).padEnd(5, '0');
+            const value = parseInt(chunk, 2);
+            result += ZBASE32_ALPHABET[value];
+        }
+
+        return result;
+    }
+
+    function zBase32Decode(encoded) {
+        // Convert to binary
+        let binary = '';
+        for (let i = 0; i < encoded.length; i++) {
+            const index = ZBASE32_ALPHABET.indexOf(encoded[i]);
+            if (index === -1) continue;
+            binary += index.toString(2).padStart(5, '0');
+        }
+
+        // Process 8 bits at a time to get bytes
+        const bytes = [];
+        for (let i = 0; i < binary.length - 7; i += 8) {
+            const chunk = binary.slice(i, i + 8);
+            bytes.push(parseInt(chunk, 2));
+        }
+
+        // Convert bytes back to WordArray
+        const words = [];
+        for (let i = 0; i < bytes.length; i += 4) {
+            let word = 0;
+            for (let j = 0; j < 4 && i + j < bytes.length; j++) {
+                word |= bytes[i + j] << (24 - j * 8);
+            }
+            words.push(word);
+        }
+
+        return CryptoJS.lib.WordArray.create(words, bytes.length);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── WEBSOCKET & CHAT INPUT INTERCEPTION (OUTGOING ENCRYPTION) ──────────────
+    // ─────────────────────────────────────────────────────────────────────────────
     function monitorCommunication() {
         const originalWebSocket = window.WebSocket;
         window.WebSocket = function(url, protocols) {
@@ -378,7 +542,9 @@
         chatObserver.observe(document.body, { childList: true, subtree: true });
     }
 
-    // --- Periodic scanning for "!e2ee!" messages ---
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── PERIODIC SCANNING FOR "!e2ee!" MESSAGES ────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
     function findTextNodesContaining(substring, root) {
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         const results = [];
@@ -396,7 +562,7 @@
                 const parentEl = node.parentElement;
                 if (!parentEl) return;
 
-                // Preserve original ciphertext
+                // Preserve the original ciphertext
                 const rawText = parentEl.dataset.e2eeRaw || node.nodeValue.trim();
                 parentEl.dataset.e2eeRaw = rawText;
 
@@ -412,7 +578,9 @@
         }, 2000);
     }
 
-    // --- Initialize ---
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── INIT ───────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
     function init() {
         createE2EEControls();
         monitorCommunication();
