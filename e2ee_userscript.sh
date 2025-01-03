@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         E2EE messages over Lichess chat (with CJK encoding)
+// @name         E2EE messages over Lichess chat
 // @namespace    http://tampermonkey.net/
-// @version      0.8
-// @description  Encrypts messages before sending, and decrypts chat box, with optional CJK-based encoding
+// @version      0.9.1
+// @description  Encrypts messages before sending, and decrypts chat box
 // @match        https://lichess.org/*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
@@ -20,8 +20,8 @@
     const PASSPHRASE_STORAGE_KEY   = 'lichessE2EEPassphrase';
 
     // Markers for verifying decryption correctness
-    const MARKER_START = '<X>';
-    const MARKER_END   = '<Y>';
+    const MARKER_START = 'X^';
+    const MARKER_END   = '#Y';
 
     // Dynamic E2EE tag
     const E2EE_TAG = '!e!';
@@ -29,7 +29,7 @@
     // Defaults
     let isEncryptionEnabled = false;
     let passphrase = '';
-    let encodingChoice = 'c'; // default CJK
+    let encodingChoice = 'c'; // default to zBase32
 
     // Available encodings (extended with 'c' for CJK)
     const ENCODING_OPTIONS = {
