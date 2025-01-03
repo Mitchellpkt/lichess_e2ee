@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         E2EE messages over Lichess chat
+// @name         E2EE messages over Lichess chat (with CJK encoding)
 // @namespace    http://tampermonkey.net/
-// @version      0.7
-// @description  Encrypts messages before sending, and decrypts chat box
+// @version      0.8
+// @description  Encrypts messages before sending, and decrypts chat box, with optional CJK-based encoding
 // @match        https://lichess.org/*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
@@ -24,19 +24,38 @@
     const MARKER_END   = '<Y>';
 
     // Dynamic E2EE tag
-    const E2EE_TAG = '!e2ee!';
-
-    // Available encodings
-    const ENCODING_OPTIONS = {
-        b: 'Base64',
-        h: 'Hex',
-        z: 'Z-Base32'
-    };
+    const E2EE_TAG = '!e!';
 
     // Defaults
     let isEncryptionEnabled = false;
     let passphrase = '';
-    let encodingChoice = 'z'; // default to zBase32
+    let encodingChoice = 'c'; // default CJK
+
+    // Available encodings (extended with 'c' for CJK)
+    const ENCODING_OPTIONS = {
+        b: 'Base64',
+        h: 'Hex',
+        z: 'Z-Base32',
+        c: 'CJK',   // new! packs ~14 bits into one Unicode character
+    };
+
+    // Encodings details
+    const CJK_BASE = 0x4E00;      // Start of common CJK block
+    const CJK_BITS_PER_CHAR = 14; // We'll store 14 bits per code point
+    const CJK_MAX_VALUE = (1 << CJK_BITS_PER_CHAR) - 1; // 16383
+    const ZBASE32_ALPHABET = 'ybndrfg8ejkmcpqxot1uwisza345h769';
+
+
+    // Helper: convert a CryptoJS WordArray to a normal byte array plus bitLength
+    function wordArrayToBytes(wordArray) {
+        const { words, sigBytes } = wordArray;
+        const bytes = new Uint8Array(sigBytes);
+        for (let i = 0; i < sigBytes; i++) {
+            bytes[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+        }
+        return { bytes, bitLength: sigBytes * 8 };
+    }
+
 
     // ─────────────────────────────────────────────────────────────────────────────
     // ─── LOAD/SAVE CONFIG AND PASSPHRASE ────────────────────────────────────────
@@ -294,7 +313,7 @@
         encodingSelect.style.padding = '0.2rem';
         encodingSelect.style.borderRadius = '3px';
 
-        // Populate the <select> with b/h/z
+        // Populate the <select> with b/h/z/c
         Object.entries(ENCODING_OPTIONS).forEach(([val, label]) => {
             const opt = document.createElement('option');
             opt.value = val;
@@ -306,7 +325,7 @@
         });
 
         encodingSelect.addEventListener('change', () => {
-            encodingChoice = encodingSelect.value; // b/h/z
+            encodingChoice = encodingSelect.value; // b/h/z/c
             saveConfiguration();
         });
 
@@ -344,8 +363,8 @@
     // ─────────────────────────────────────────────────────────────────────────────
 
     // 1) AES encrypt the message, giving us .ciphertext, .salt, .iv
-    // 2) Encode each piece with the chosen method (b/h/z)
-    // 3) Prefix with "!e2ee!x|" where x ∈ {b,h,z}
+    // 2) Encode each piece with the chosen method (b/h/z/c)
+    // 3) Prefix with "!e2ee!x|" where x ∈ {b,h,z,c}
     function encryptMessage(message) {
         if (!isEncryptionEnabled || !passphrase) return message;
         try {
@@ -370,7 +389,7 @@
             // Must start with "!e2ee!"
             if (!fullText.startsWith(E2EE_TAG)) return null;
 
-            // Next character after "!e2ee!" is encoding (b/h/z), then '|'
+            // Next character after "!e2ee!" is encoding (b/h/z/c), then '|'
             const encChar = fullText.charAt(E2EE_TAG.length);
             if (!ENCODING_OPTIONS[encChar]) return null; // invalid
             const remainder = fullText.slice(E2EE_TAG.length + 2); // skip "x|"
@@ -408,7 +427,7 @@
     // ─── INDIVIDUAL ENCODING ROUTINES ───────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────────────────────
 
-    // Encodes a CryptoJS WordArray using b/h/z
+    // Encodes a CryptoJS WordArray using b/h/z/c
     function encodeData(wordArray, method) {
         switch (method) {
             case 'b': // Base64
@@ -420,12 +439,17 @@
                 return wordArray.toString(CryptoJS.enc.Hex);
 
             case 'z': // Z-Base-32
+                return zBase32Encode(wordArray);
+
+            case 'c': // CJK
+                return cjkEncode(wordArray);
+
             default:
                 return zBase32Encode(wordArray);
         }
     }
 
-    // Decodes a string to a CryptoJS WordArray using b/h/z
+    // Decodes a string to a CryptoJS WordArray using b/h/z/c
     function decodeData(str, method) {
         switch (method) {
             case 'b': // Base64
@@ -437,6 +461,11 @@
                 return CryptoJS.enc.Hex.parse(str);
 
             case 'z': // Z-Base-32
+                return zBase32Decode(str);
+
+            case 'c': // CJK
+                return cjkDecode(str);
+
             default:
                 return zBase32Decode(str);
         }
@@ -445,7 +474,6 @@
     // ─────────────────────────────────────────────────────────────────────────────
     // ─── BASE32 (LOWERCASE-ONLY) HELPERS ────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────────────────────
-    const ZBASE32_ALPHABET = 'ybndrfg8ejkmcpqxot1uwisza345h769';
 
     function zBase32Encode(wordArray) {
         // First convert WordArray to regular bytes
@@ -502,6 +530,92 @@
 
         return CryptoJS.lib.WordArray.create(words, bytes.length);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ─── CJK HELPERS ─────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+    //
+    // We'll encode 14 bits per code point to stay within U+4E00..U+9FFF (which
+    // has room for ~20,992 code points). 2^14 = 16384, so each code point
+    // can represent a value from 0..16383. This yields more density than base32.
+    //
+    // The offset chosen (CJK_BASE = 0x4E00) is the start of the "CJK Unified
+    // Ideographs" block. We only go up to 0x4E00 + 16383 = 0x8FFF range, which
+    // is well within the total block size. Unused code points near the top
+    // of the block remain unused.
+    //
+    // --------------------------------------------------------------------------
+
+    function cjkEncode(wordArray) {
+    const { bytes, bitLength } = wordArrayToBytes(wordArray);
+
+    // Convert bytes to binary string
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binary += bytes[i].toString(2).padStart(8, '0');
+    }
+
+    // Store the original bit length as first 14 bits
+    const lengthPrefix = bitLength.toString(2).padStart(CJK_BITS_PER_CHAR, '0');
+
+    // Pad the data bits if needed
+    if (binary.length % CJK_BITS_PER_CHAR !== 0) {
+        binary = binary.padEnd(
+            binary.length + (CJK_BITS_PER_CHAR - (binary.length % CJK_BITS_PER_CHAR)),
+            '0'
+        );
+    }
+
+    // Combine length prefix with data
+    binary = lengthPrefix + binary;
+
+    // Encode to CJK characters
+    let result = '';
+    for (let i = 0; i < binary.length; i += CJK_BITS_PER_CHAR) {
+        const chunk = binary.slice(i, i + CJK_BITS_PER_CHAR);
+        const value = parseInt(chunk, 2);
+        result += String.fromCharCode(CJK_BASE + value);
+    }
+    return result;
+}
+
+function cjkDecode(encoded) {
+    // Convert to binary string
+    let binary = '';
+    for (let i = 0; i < encoded.length; i++) {
+        const codePoint = encoded.charCodeAt(i);
+        const value = codePoint - CJK_BASE;
+        if (value < 0 || value > CJK_MAX_VALUE) continue;
+        binary += value.toString(2).padStart(CJK_BITS_PER_CHAR, '0');
+    }
+
+    // Extract the original length from first character
+    const originalBitLength = parseInt(binary.slice(0, CJK_BITS_PER_CHAR), 2);
+    binary = binary.slice(CJK_BITS_PER_CHAR);
+
+    // Truncate to original length
+    binary = binary.slice(0, originalBitLength);
+
+    // Convert back to bytes
+    const bytes = [];
+    for (let i = 0; i < binary.length; i += 8) {
+        const chunk = binary.slice(i, i + 8);
+        if (chunk.length < 8) break;
+        bytes.push(parseInt(chunk, 2));
+    }
+
+    // Convert to WordArray
+    const words = [];
+    for (let i = 0; i < bytes.length; i += 4) {
+        let word = 0;
+        for (let j = 0; j < 4 && i + j < bytes.length; j++) {
+            word |= bytes[i + j] << (24 - j * 8);
+        }
+        words.push(word);
+    }
+
+    return CryptoJS.lib.WordArray.create(words, bytes.length);
+}
 
     // ─────────────────────────────────────────────────────────────────────────────
     // ─── WEBSOCKET & CHAT INPUT INTERCEPTION (OUTGOING ENCRYPTION) ──────────────
@@ -585,7 +699,7 @@
         createE2EEControls();
         monitorCommunication();
         periodicDecryptionScanner();
-        debug('Initialized E2EE Chat');
+        debug('Initialized E2EE Chat (with CJK encoding option)');
     }
 
     if (document.readyState === 'loading') {
